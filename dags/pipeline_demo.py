@@ -24,7 +24,7 @@ dag = DAG(
     'ml_workflow',
     default_args=default_args,
     description='A simple ML pipeline',
-    schedule_interval=timedelta(days=1),
+    schedule_interval='0 17 * * *',
 )
 
 def load_data():
