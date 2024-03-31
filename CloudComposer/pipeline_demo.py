@@ -8,6 +8,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from joblib import dump, load
+import os
+from airflow.providers.google.cloud.hooks.gcs import GCSHook
+import tempfile
 
 default_args = {
     'owner': 'airflow',
@@ -41,13 +44,44 @@ def train_model(ti):
     X_scaled, y = ti.xcom_pull(task_ids='preprocess_data')
     model = LogisticRegression(random_state=42)
     model.fit(X_scaled, y)
-    model_path = '/opt/airflow/dags/data/logistic_model.joblib'
-    dump(model, model_path)
-    return model_path
+
+    ######################################
+    ######## Using Cloud Composer ########
+    ######################################
+
+    # Use Airflow's GCSHook to upload the model
+    gcs_hook = GCSHook()
+    bucket_name = os.environ.get('BUCKET_NAME')
+    object_name = 'airflow_demo_dmc/logistic_model.joblib'
+    
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        # Save the model to a temporary file
+        dump(model, tmp.name)
+        # Upload the temporary file to GCS
+        gcs_hook.upload(bucket_name, object_name, tmp.name)
+    
+    return f'gs://{bucket_name}/{object_name}'
 
 def evaluate_model(ti):
     model_path = ti.xcom_pull(task_ids='train_model')
-    model = load(model_path)
+
+    ######################################
+    ######## Using Cloud Composer ########
+    ######################################
+
+    # Extract bucket name and object name from the model_path
+    _, _, bucket_name, object_name = model_path.split('/', 3)
+    
+    gcs_hook = GCSHook()
+    
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        # Download the model from GCS to a temporary file
+        gcs_hook.download(bucket_name, object_name, tmp.name)
+        # Load the model from the temporary file
+        model = load(tmp.name)
+
+    ######################################
+
     X_scaled, y = ti.xcom_pull(task_ids='preprocess_data')
     predictions = model.predict(X_scaled)
     accuracy = accuracy_score(y, predictions)
